@@ -11,6 +11,8 @@ _PHONE_MIN = 7
 _PHONE_MAX = 20
 
 
+# --- auth ---------------------------------------------------------------------
+
 class TokenRequest(BaseModel):
     client_id: str = Field(min_length=1)
     client_secret: str = Field(min_length=1)
@@ -28,12 +30,54 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=1)
 
 
+# --- rooms (locations) --------------------------------------------------------
+
+class RoomCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+
+
+class RoomUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+
+
+class RoomOut(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# --- tables -------------------------------------------------------------------
+
+class TableCreate(BaseModel):
+    table_number: str = Field(min_length=1, max_length=20)
+    capacity: int = Field(ge=2, le=12)
+    room_id: Optional[int] = None
+
+
+class TableUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    table_number: Optional[str] = Field(default=None, min_length=1, max_length=20)
+    capacity: Optional[int] = Field(default=None, ge=2, le=12)
+    room_id: Optional[int] = None
+
+
 class TableOut(BaseModel):
     id: int
     table_number: str
     capacity: int
+    room_id: Optional[int] = None
+    room: Optional[RoomOut] = None
     created_at: datetime
 
+
+# --- reservations -------------------------------------------------------------
 
 class ReservationBase(BaseModel):
     phone: str = Field(min_length=_PHONE_MIN, max_length=_PHONE_MAX)

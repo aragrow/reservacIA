@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     client_id: str
     client_secret: str
     allowed_ips: str = "127.0.0.1/32"
+    local_mode: bool = False                # dev-only: enable /_debug/dev-token and auto-auth /docs
+    # Pre-issued dev tokens kept in .env purely for convenience. Only surfaced
+    # by /docs examples when local_mode=true. Optional — /_debug/dev-token
+    # issues fresh ones on demand.
+    access_token: str | None = None
+    refresh_token: str | None = None
 
     @field_validator("allowed_ips")
     @classmethod

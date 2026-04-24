@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from app.config import Settings, get_settings
 from app.models import RefreshRequest, TokenRequest, TokenResponse
@@ -12,6 +12,20 @@ from app.security import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# When local_mode=true, pre-fill the Swagger "Try it out" form with the actual
+# .env values so the reviewer can just hit Execute.
+_s = get_settings()
+_TOKEN_EXAMPLE = (
+    {"client_id": _s.client_id, "client_secret": _s.client_secret}
+    if _s.local_mode else
+    {"client_id": "agent-client", "client_secret": "your-client-secret"}
+)
+_REFRESH_EXAMPLE = (
+    {"refresh_token": _s.refresh_token}
+    if _s.local_mode and _s.refresh_token else
+    {"refresh_token": "<paste a refresh_token from POST /auth/token>"}
+)
 
 
 def _pair(settings: Settings) -> TokenResponse:
@@ -27,7 +41,7 @@ def _pair(settings: Settings) -> TokenResponse:
 
 @router.post("/token", response_model=TokenResponse)
 def issue_token(
-    body: TokenRequest,
+    body: TokenRequest = Body(..., examples=[_TOKEN_EXAMPLE]),
     settings: Settings = Depends(get_settings),
 ) -> TokenResponse:
     if not verify_client_credentials(body.client_id, body.client_secret, settings):
@@ -40,7 +54,7 @@ def issue_token(
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh_token(
-    body: RefreshRequest,
+    body: RefreshRequest = Body(..., examples=[_REFRESH_EXAMPLE]),
     settings: Settings = Depends(get_settings),
 ) -> TokenResponse:
     # Verifies signature, expiry, `typ=refresh`, and matching client id.

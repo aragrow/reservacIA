@@ -31,6 +31,15 @@ Override host/port with env vars: `RESERVACIA_HOST=127.0.0.1 RESERVACIA_PORT=876
 | `REFRESH_TTL_DAYS` | refresh token lifetime (default `180` ≈ 6 months; rotates on use) |
 | `CLIENT_ID` / `CLIENT_SECRET` | the agent's credentials for `/auth/token` |
 | `ALLOWED_IPS` | comma-separated CIDR list, e.g. `127.0.0.1/32,10.0.0.0/24` |
+| `LOCAL_MODE` | when `true`, enables dev-only conveniences (see below). MUST be `false` in production. |
+| `ACCESS_TOKEN` / `REFRESH_TOKEN` | optional — pre-issued dev tokens surfaced as `/docs` examples in local mode |
+
+### Local dev mode (`LOCAL_MODE=true`)
+
+Three conveniences, all loopback-guarded:
+- **`GET /_debug/dev-token`** — returns a fresh `access_token` + `refresh_token` pair without requiring credentials. 404 outside local mode, 403 off-loopback. Not in the OpenAPI spec.
+- **`/docs` auto-authorizes on load** — the custom docs page calls `/_debug/dev-token` and preauthorizes Swagger's `HTTPBearer` scheme. Just open the page and every protected route works. No copy-paste.
+- **Pre-filled request-body examples** on `/auth/token` and `/auth/refresh` using your real `.env` values, so manual "Try it out" also works without typing.
 
 ## Endpoints
 
@@ -39,8 +48,18 @@ Override host/port with env vars: `RESERVACIA_HOST=127.0.0.1 RESERVACIA_PORT=876
 | GET | `/health` | IP only | liveness |
 | POST | `/auth/token` | IP only | exchange `client_id`+`client_secret` for an access+refresh token pair |
 | POST | `/auth/refresh` | IP only | exchange a refresh token for a new access+refresh pair (rotating) |
-| GET | `/tables` | JWT | list all 50 tables |
-| GET | `/tables/{id}` | JWT | fetch one table |
+| GET | `/rooms` | JWT | list rooms (Bar, Booths, Dining Room 1, Dining Room 2, plus any you create) |
+| POST | `/rooms` | JWT | create a room |
+| GET | `/rooms/{id}` | JWT | fetch one room |
+| PATCH | `/rooms/{id}` | JWT | update name/description |
+| DELETE | `/rooms/{id}` | JWT | delete (409 if any table still assigned) |
+| GET | `/rooms/{id}/tables` | JWT | all tables in a given room |
+| GET | `/tables` | JWT | list tables; optional `?room_id=N` filter |
+| POST | `/tables` | JWT | create a table (`table_number`, `capacity 2-12`, optional `room_id`) |
+| GET | `/tables/available` | JWT | tables with no conflict within 2h of `?at=ISO`; filters: `?party_size=N&room_id=N` |
+| GET | `/tables/{id}` | JWT | fetch one table (includes nested `room`) |
+| PATCH | `/tables/{id}` | JWT | update number/capacity/room (409 if shrinking capacity below an existing party) |
+| DELETE | `/tables/{id}` | JWT | delete (409 if referenced by any reservation) |
 | GET | `/tables/{id}/reservations` | JWT | reservations assigned to a given table (supports `?status=...`) |
 | GET | `/reservations` | JWT | list; filters: `?phone=...&status=confirmed\|cancelled&table_id=...` |
 | GET | `/reservations/{id}` | JWT | fetch one |
@@ -48,7 +67,7 @@ Override host/port with env vars: `RESERVACIA_HOST=127.0.0.1 RESERVACIA_PORT=876
 | PATCH | `/reservations/{id}` | JWT | partial update |
 | POST | `/reservations/{id}/cancel` | JWT | soft-cancel (sets `status='cancelled'`) |
 
-Interactive OpenAPI docs: `http://localhost:8765/docs` — click **Authorize** 🔒, paste the access token into the `HTTPBearer` field, and every protected call uses it automatically.
+Interactive OpenAPI docs: `http://localhost:8765/docs`. In local mode (`LOCAL_MODE=true`) the Authorize dialog is pre-filled automatically on page load — just open and go. In production mode, click **Authorize** 🔒 and paste an access token into the `HTTPBearer` field.
 
 ## Quick usage
 
@@ -105,18 +124,28 @@ uv run pytest -q
 
 The `pytest` dependency lives in the `dev` group in `pyproject.toml` and is installed by `uv sync` by default.
 
-Covers: token issuance, every auth failure mode, IP allowlist (allowed + blocked), reservation lifecycle, validation, 404s.
+**55 tests** across five files covering: JWT issuance + refresh rotation, every auth failure mode (expired / forged signature / wrong `cid` claim / refresh-used-as-access / access-used-as-refresh), IP allowlist (allowed + blocked), full reservation lifecycle, table assignment rules (capacity, 2h conflict, 2h boundary, simultaneous different tables, auto-reassignment on patch), tables CRUD + delete guards, rooms CRUD + delete guards, availability endpoint filters, nested routes, validation, 404s.
 
 ## Data model
 
 ```
+rooms (
+    id           INTEGER PK,
+    name         TEXT UNIQUE,             -- e.g. 'Bar', 'Booths', 'Dining Room 1'
+    description  TEXT?,
+    created_at, updated_at
+)
+-- 4 rooms seeded: Bar, Booths, Dining Room 1, Dining Room 2
+
 tables (
     id            INTEGER PK,
     table_number  TEXT UNIQUE,           -- e.g. 'T01'
     capacity      INTEGER CHECK (BETWEEN 2 AND 12),
+    room_id       INTEGER REFERENCES rooms(id),
     created_at
 )
--- 50 tables seeded: 16×2 + 16×4 + 10×6 + 5×8 + 2×10 + 1×12
+-- 50 tables: 16×2 + 16×4 + 10×6 + 5×8 + 2×10 + 1×12
+-- split 10 (Bar) + 12 (Booths) + 14 (Dining 1) + 14 (Dining 2)
 
 reservations (
     id              INTEGER PK,
@@ -137,11 +166,14 @@ reservations (
 - no two confirmed reservations on the same table within 2 hours
 - auto-assignment picks the smallest fitting capacity, breaking ties by current load so bookings spread across the floor
 
-## Seed tables + backfill
+## Seed tables + rooms + backfill
 
 ```bash
-uv run python scripts/seed_tables.py   # idempotent: creates 50 tables, backfills any unassigned confirmed reservations
+uv run python scripts/seed_tables.py   # 50 tables, backfills confirmed reservations with table assignments
+uv run python scripts/seed_rooms.py    # 4 rooms, assigns every table to one
 ```
+
+Both are idempotent — safe to re-run.
 
 ## Project layout
 
@@ -154,11 +186,15 @@ app/
 ├── models.py            # Pydantic request/response schemas
 ├── crud.py              # SQL helpers
 └── routers/
-    ├── auth.py          # POST /auth/token
-    └── reservations.py  # CRUD + query endpoints
+    ├── auth.py          # POST /auth/token, /auth/refresh
+    ├── debug.py         # GET /_debug/dev-token (local mode only, loopback-guarded)
+    ├── rooms.py         # CRUD + /rooms/{id}/tables
+    ├── tables.py        # CRUD + /tables/available + /tables/{id}/reservations
+    └── reservations.py  # CRUD + filters
 scripts/
 ├── seed.py              # 100 past + 100 future reservations across ~95 customers
-└── seed_tables.py       # 50 tables + backfill confirmed reservations
+├── seed_tables.py       # 50 tables + backfill confirmed reservations
+└── seed_rooms.py        # 4 rooms + assigns every table to a room
 tests/                   # pytest suite (conftest pins TestClient IP to 127.0.0.1)
 ```
 

@@ -277,6 +277,85 @@ def test_nested_tables_reservations_404_for_unknown_table(client, auth_headers):
     assert resp.status_code == 404
 
 
+def test_available_returns_all_50_when_empty(client, auth_headers):
+    resp = client.get(
+        "/tables/available",
+        params={"at": _future_iso(days=40, hour=19)},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) == 50
+
+
+def test_available_filters_by_capacity(client, auth_headers):
+    # party_size=6 should exclude the 32 two-tops and four-tops (16+16),
+    # leaving 10+5+2+1 = 18 tables.
+    resp = client.get(
+        "/tables/available",
+        params={"at": _future_iso(days=41, hour=19), "party_size": 6},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    tables = resp.json()
+    assert len(tables) == 18
+    assert all(t["capacity"] >= 6 for t in tables)
+    # Sorted smallest first.
+    assert [t["capacity"] for t in tables] == (
+        [6] * 10 + [8] * 5 + [10] * 2 + [12]
+    )
+
+
+def test_available_excludes_tables_within_2h_conflict(client, auth_headers):
+    at = _future_iso(days=42, hour=19)
+    # Book tables 1 and 2 at that exact time.
+    for tid in (1, 2):
+        r = client.post(
+            "/reservations",
+            json=_payload(party_size=2, reservation_at=at, table_id=tid),
+            headers=auth_headers,
+        )
+        assert r.status_code == 201
+
+    # Same time, same capacity class → excludes 1 and 2.
+    resp = client.get(
+        "/tables/available",
+        params={"at": at, "party_size": 2},
+        headers=auth_headers,
+    )
+    ids = [t["id"] for t in resp.json()]
+    assert 1 not in ids and 2 not in ids
+    # 16 cap-2 tables → 14 left. Plus 16+10+5+2+1 = 34 larger. Total 48.
+    assert len(ids) == 48
+
+
+def test_available_outside_2h_window_includes_booked_table(client, auth_headers):
+    booked_at = _future_iso(days=43, hour=18)
+    r = client.post(
+        "/reservations",
+        json=_payload(party_size=2, reservation_at=booked_at, table_id=3),
+        headers=auth_headers,
+    )
+    assert r.status_code == 201
+
+    # Check availability exactly 2h later — conflict boundary is strict <2h,
+    # so the booked table should reappear.
+    two_h_after = (
+        datetime.fromisoformat(booked_at) + timedelta(hours=2)
+    ).isoformat()
+    resp = client.get(
+        "/tables/available",
+        params={"at": two_h_after, "party_size": 2},
+        headers=auth_headers,
+    )
+    ids = [t["id"] for t in resp.json()]
+    assert 3 in ids
+
+
+def test_available_requires_at_parameter(client, auth_headers):
+    resp = client.get("/tables/available", headers=auth_headers)
+    assert resp.status_code == 422
+
+
 def test_cancel_releases_table_for_same_time(client, auth_headers):
     at = _future_iso(days=22, hour=19, minute=0)
     r1 = client.post(
