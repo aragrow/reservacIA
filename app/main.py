@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse
 
 from app.config import get_settings
 from app.db import init_db
-from app.routers import auth, debug, reservations, rooms, tables
+from app.routers import auth, debug, reservations, reviews, rooms, tables
 from app.security import IPAllowlistMiddleware
 
 
@@ -36,6 +36,7 @@ app.include_router(auth.router)
 app.include_router(rooms.router)
 app.include_router(tables.router)
 app.include_router(reservations.router)
+app.include_router(reviews.router)
 if settings.local_mode:
     app.include_router(debug.router)
 

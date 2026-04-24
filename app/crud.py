@@ -7,6 +7,10 @@ from typing import Any, Optional
 from app.models import (
     ReservationCreate,
     ReservationUpdate,
+    ReviewCommentCreate,
+    ReviewCommentUpdate,
+    ReviewCreate,
+    ReviewUpdate,
     RoomCreate,
     RoomUpdate,
     TableCreate,
@@ -21,6 +25,12 @@ _RESERVATION_COLUMNS = (
 )
 _TABLE_COLUMNS = "id, table_number, capacity, room_id, created_at"
 _ROOM_COLUMNS = "id, name, description, created_at, updated_at"
+_REVIEW_COLUMNS = (
+    "id, reviewer_name, reviewer_city, rating, body, created_at, updated_at"
+)
+_REVIEW_COMMENT_COLUMNS = (
+    "id, review_id, author_role, author_name, body, created_at, updated_at"
+)
 
 
 class ReservationError(Exception):
@@ -463,3 +473,128 @@ def cancel_reservation(
         (reservation_id,),
     )
     return get_reservation(conn, reservation_id)
+
+
+# --- reviews -----------------------------------------------------------------
+
+def list_reviews(
+    conn: sqlite3.Connection,
+    limit: int = 50,
+    offset: int = 0,
+    min_rating: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if min_rating is not None:
+        clauses.append("rating >= ?")
+        params.append(min_rating)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.extend([limit, offset])
+    rows = conn.execute(
+        f"SELECT {_REVIEW_COLUMNS} FROM reviews {where} "
+        "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+        params,
+    ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def _fetch_review_row(
+    conn: sqlite3.Connection, review_id: int
+) -> Optional[dict[str, Any]]:
+    row = conn.execute(
+        f"SELECT {_REVIEW_COLUMNS} FROM reviews WHERE id = ?", (review_id,)
+    ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def get_review(
+    conn: sqlite3.Connection, review_id: int
+) -> Optional[dict[str, Any]]:
+    review = _fetch_review_row(conn, review_id)
+    if review is None:
+        return None
+    review["comments"] = list_review_comments(conn, review_id)
+    return review
+
+
+def create_review(
+    conn: sqlite3.Connection, data: ReviewCreate
+) -> dict[str, Any]:
+    cur = conn.execute(
+        """
+        INSERT INTO reviews (reviewer_name, reviewer_city, rating, body)
+        VALUES (?, ?, ?, ?)
+        """,
+        (data.reviewer_name, data.reviewer_city, data.rating, data.body),
+    )
+    return get_review(conn, cur.lastrowid)  # type: ignore[arg-type, return-value]
+
+
+def update_review(
+    conn: sqlite3.Connection, review_id: int, data: ReviewUpdate
+) -> Optional[dict[str, Any]]:
+    if _fetch_review_row(conn, review_id) is None:
+        return None
+    changes = data.model_dump(exclude_unset=True)
+    if not changes:
+        return get_review(conn, review_id)
+    sets = [f"{k} = ?" for k in changes] + ["updated_at = datetime('now')"]
+    params = list(changes.values()) + [review_id]
+    conn.execute(f"UPDATE reviews SET {', '.join(sets)} WHERE id = ?", params)
+    return get_review(conn, review_id)
+
+
+# --- review comments ---------------------------------------------------------
+
+def list_review_comments(
+    conn: sqlite3.Connection, review_id: int
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        f"SELECT {_REVIEW_COMMENT_COLUMNS} FROM review_comments "
+        "WHERE review_id = ? ORDER BY created_at ASC, id ASC",
+        (review_id,),
+    ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_review_comment(
+    conn: sqlite3.Connection, comment_id: int
+) -> Optional[dict[str, Any]]:
+    row = conn.execute(
+        f"SELECT {_REVIEW_COMMENT_COLUMNS} FROM review_comments WHERE id = ?",
+        (comment_id,),
+    ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def create_review_comment(
+    conn: sqlite3.Connection,
+    review_id: int,
+    data: ReviewCommentCreate,
+) -> dict[str, Any]:
+    cur = conn.execute(
+        """
+        INSERT INTO review_comments (review_id, author_role, author_name, body)
+        VALUES (?, ?, ?, ?)
+        """,
+        (review_id, data.author_role, data.author_name, data.body),
+    )
+    return get_review_comment(conn, cur.lastrowid)  # type: ignore[arg-type, return-value]
+
+
+def update_review_comment(
+    conn: sqlite3.Connection,
+    comment_id: int,
+    data: ReviewCommentUpdate,
+) -> Optional[dict[str, Any]]:
+    if get_review_comment(conn, comment_id) is None:
+        return None
+    changes = data.model_dump(exclude_unset=True)
+    if not changes:
+        return get_review_comment(conn, comment_id)
+    sets = [f"{k} = ?" for k in changes] + ["updated_at = datetime('now')"]
+    params = list(changes.values()) + [comment_id]
+    conn.execute(
+        f"UPDATE review_comments SET {', '.join(sets)} WHERE id = ?", params
+    )
+    return get_review_comment(conn, comment_id)

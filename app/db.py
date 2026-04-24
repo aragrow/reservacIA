@@ -39,6 +39,29 @@ CREATE TABLE IF NOT EXISTS reservations (
 );
 CREATE INDEX IF NOT EXISTS idx_reservations_phone    ON reservations(phone);
 CREATE INDEX IF NOT EXISTS idx_reservations_status   ON reservations(status);
+
+CREATE TABLE IF NOT EXISTS reviews (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    reviewer_name  TEXT    NOT NULL,
+    reviewer_city  TEXT,
+    rating         INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    body           TEXT    NOT NULL,
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_rating   ON reviews(rating);
+CREATE INDEX IF NOT EXISTS idx_reviews_created  ON reviews(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS review_comments (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id    INTEGER NOT NULL REFERENCES reviews(id),
+    author_role  TEXT    NOT NULL CHECK (author_role IN ('restaurant','customer')),
+    author_name  TEXT    NOT NULL,
+    body         TEXT    NOT NULL,
+    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_review_comments_review ON review_comments(review_id, created_at);
 """
 # Indexes on late-added columns (`table_id`, `room_id`) live in _migrate()
 # so pre-existing databases get the columns before the indexes try to use them.

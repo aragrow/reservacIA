@@ -132,3 +132,57 @@ class ReservationOut(ReservationBase):
     table: Optional[TableOut] = None
     created_at: datetime
     updated_at: datetime
+
+
+# --- reviews -----------------------------------------------------------------
+
+ReviewAuthorRole = Literal["restaurant", "customer"]
+
+
+class ReviewCommentCreate(BaseModel):
+    author_role: ReviewAuthorRole
+    author_name: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=2000)
+
+
+class ReviewCommentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: Optional[str] = Field(default=None, min_length=1, max_length=2000)
+
+
+class ReviewCommentOut(BaseModel):
+    id: int
+    review_id: int
+    author_role: ReviewAuthorRole
+    author_name: str
+    body: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReviewCreate(BaseModel):
+    reviewer_name: str = Field(min_length=1, max_length=200)
+    reviewer_city: Optional[str] = Field(default=None, max_length=100)
+    rating: int = Field(ge=1, le=5)
+    body: str = Field(min_length=1, max_length=5000)
+
+
+class ReviewUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    reviewer_city: Optional[str] = Field(default=None, max_length=100)
+    rating: Optional[int] = Field(default=None, ge=1, le=5)
+    body: Optional[str] = Field(default=None, min_length=1, max_length=5000)
+
+
+class ReviewOut(BaseModel):
+    id: int
+    reviewer_name: str
+    reviewer_city: Optional[str] = None
+    rating: int
+    body: str
+    comments: list[ReviewCommentOut] = []
+    created_at: datetime
+    updated_at: datetime
