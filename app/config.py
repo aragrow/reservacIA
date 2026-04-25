@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     datetime_format: str = "%d/%m/%Y %H:%M" # e.g. 25/04/2026 19:30
 
     local_mode: bool = False                # dev-only: enable /_debug/dev-token and auto-auth /docs
+
+    # Security knobs (see docs in /app/middleware.py).
+    audit_log_path: str = "./data/audit.jsonl"
+    rate_limit_data_per_minute: int = 60        # per-cid limit on /reservations,/rooms,/tables,/reviews
+    rate_limit_auth_per_minute: int = 5         # per-IP limit on /auth/token (brute-force throttle)
+    rate_limit_other_per_minute: int = 30       # per-cid limit on /auth/refresh and /_debug/*
+    max_body_bytes: int = 64 * 1024             # reject bodies larger than this (413)
     # Pre-issued dev tokens kept in .env purely for convenience. Only surfaced
     # by /docs examples when local_mode=true. Optional — /_debug/dev-token
     # issues fresh ones on demand.

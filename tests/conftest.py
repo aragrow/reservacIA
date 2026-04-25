@@ -21,9 +21,24 @@ def env_setup() -> Iterator[None]:
             "CLIENT_ID": "test-client",
             "CLIENT_SECRET": "test-secret",
             "ALLOWED_IPS": "127.0.0.1/32",
+            # Security middleware: very high defaults so the existing test suite
+            # doesn't trip rate limits. Tests that exercise the limit override
+            # these via monkeypatch.setenv before constructing their own client.
+            "AUDIT_LOG_PATH": str(Path(tmpdir) / "audit.jsonl"),
+            "RATE_LIMIT_DATA_PER_MINUTE": "10000",
+            "RATE_LIMIT_AUTH_PER_MINUTE": "10000",
+            "RATE_LIMIT_OTHER_PER_MINUTE": "10000",
         }
     )
     yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_store() -> None:
+    """Each test starts with a fresh in-memory sliding window. Without this the
+    middleware's class-level dict persists across tests inside one pytest run."""
+    from app.middleware import RateLimitMiddleware
+    RateLimitMiddleware._store._buckets.clear()
 
 
 @pytest.fixture

@@ -8,6 +8,12 @@ from fastapi.responses import HTMLResponse
 
 from app.config import get_settings
 from app.db import init_db
+from app.middleware import (
+    AuditLogMiddleware,
+    BodySizeMiddleware,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from app.routers import auth, debug, reservations, reviews, rooms, tables
 from app.security import IPAllowlistMiddleware
 
@@ -30,7 +36,16 @@ app = FastAPI(
     docs_url=None if settings.local_mode else "/docs",
 )
 
-app.add_middleware(IPAllowlistMiddleware)
+# Middleware ordering: each `add_middleware` wraps the previous, so the LAST
+# call is OUTERMOST (sees requests first, sees responses last). We want:
+#   client → SecurityHeaders → AuditLog → IPAllowlist → RateLimit → BodySize → routes
+# so security headers land on every response (incl. 403/413/429) and the audit
+# log sees every final status (incl. IP rejections).
+app.add_middleware(BodySizeMiddleware)          # innermost: reject huge bodies
+app.add_middleware(RateLimitMiddleware)         # then per-cid/per-IP throttle
+app.add_middleware(IPAllowlistMiddleware)       # then deny non-allowlisted IPs
+app.add_middleware(AuditLogMiddleware)          # then capture every final status
+app.add_middleware(SecurityHeadersMiddleware)   # outermost: stamp headers on every response
 
 app.include_router(auth.router)
 app.include_router(rooms.router)
