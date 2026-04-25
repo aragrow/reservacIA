@@ -34,12 +34,14 @@ def dev_token(
     works without the copy-paste-a-token dance.
     """
     _guard(request, settings)
-    access, access_ttl = create_access_token(settings)
-    refresh, refresh_ttl = create_refresh_token(settings)
+    access, access_ttl, access_exp = create_access_token(settings)
+    refresh, refresh_ttl, refresh_exp = create_refresh_token(settings)
     return {
         "access_token": access,
         "expires_in": access_ttl,
+        "expires_at": access_exp.strftime(settings.datetime_format),
         "refresh_token": refresh,
         "refresh_expires_in": refresh_ttl,
+        "refresh_expires_at": refresh_exp.strftime(settings.datetime_format),
         "token_type": "bearer",
     }

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hmac
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from ipaddress import ip_address
+from zoneinfo import ZoneInfo
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
@@ -43,25 +44,36 @@ TOKEN_TYPE_ACCESS = "access"
 TOKEN_TYPE_REFRESH = "refresh"
 
 
-def _issue_token(settings: Settings, ttl_seconds: int, token_type: str) -> tuple[str, int]:
-    now = datetime.now(tz=timezone.utc)
+def _issue_token(
+    settings: Settings, ttl_seconds: int, token_type: str
+) -> tuple[str, int, datetime]:
+    """Issue a JWT and also return the timezone-aware expiry datetime.
+
+    `iat`/`exp` Unix-timestamp claims are timezone-agnostic by definition, but
+    the underlying `datetime` objects are computed in the configured local
+    timezone (Europe/Madrid by default) so any caller that wants to display
+    the expiry to a human gets the right wall-clock for free.
+    """
+    tz = ZoneInfo(settings.timezone)
+    now = datetime.now(tz=tz)
+    expires_at = now + timedelta(seconds=ttl_seconds)
     payload = {
         "sub": settings.client_id,
         "cid": settings.client_id,
         "typ": token_type,
         "jti": secrets.token_hex(8),  # unique per token, even within the same second
         "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
+        "exp": int(expires_at.timestamp()),
     }
     token = jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGO)
-    return token, ttl_seconds
+    return token, ttl_seconds, expires_at
 
 
-def create_access_token(settings: Settings) -> tuple[str, int]:
+def create_access_token(settings: Settings) -> tuple[str, int, datetime]:
     return _issue_token(settings, settings.jwt_ttl_minutes * 60, TOKEN_TYPE_ACCESS)
 
 
-def create_refresh_token(settings: Settings) -> tuple[str, int]:
+def create_refresh_token(settings: Settings) -> tuple[str, int, datetime]:
     return _issue_token(settings, settings.refresh_ttl_days * 86400, TOKEN_TYPE_REFRESH)
 
 

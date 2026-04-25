@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     client_id: str
     client_secret: str
     allowed_ips: str = "127.0.0.1/32"
+
+    # Localization — defaults assume the restaurant is in Spain. Override per deployment.
+    locale: str = "es_ES"
+    timezone: str = "Europe/Madrid"         # IANA tz name; handles CET/CEST DST
+    date_format: str = "%d/%m/%Y"           # e.g. 25/04/2026
+    time_format: str = "%H:%M"              # 24-hour, e.g. 19:30
+    datetime_format: str = "%d/%m/%Y %H:%M" # e.g. 25/04/2026 19:30
+
     local_mode: bool = False                # dev-only: enable /_debug/dev-token and auto-auth /docs
     # Pre-issued dev tokens kept in .env purely for convenience. Only surfaced
     # by /docs examples when local_mode=true. Optional — /_debug/dev-token

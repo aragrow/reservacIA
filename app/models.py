@@ -22,8 +22,10 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int                 # access token lifetime in seconds (24h)
+    expires_at: str                 # human-readable, formatted in the restaurant's locale (Madrid)
     refresh_token: str
     refresh_expires_in: int         # refresh token lifetime in seconds (~6 months)
+    refresh_expires_at: str         # human-readable Madrid-format expiry for the refresh token
 
 
 class RefreshRequest(BaseModel):

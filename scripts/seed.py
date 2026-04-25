@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import random
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from app.config import get_settings  # noqa: E402
 from app.db import connection, init_db  # noqa: E402
 
 RNG_SEED = 20260423
@@ -36,27 +38,27 @@ FUTURE_REPEAT_COUNT = 30          # customers with 2 future reservations 14 days
 REPEAT_GAP_DAYS = 14
 
 FIRST_NAMES = [
-    "Ana", "Luis", "Maria", "Carlos", "Sofia", "Diego", "Valentina", "Javier",
-    "Camila", "Andres", "Isabella", "Miguel", "Lucia", "Emilio", "Paula",
-    "Gabriel", "Renata", "Mateo", "Daniela", "Sebastian", "Natalia", "Tomas",
-    "Alejandra", "Rodrigo", "Elena", "Santiago", "Fernanda", "Nicolas", "Gabriela",
-    "Ricardo", "Paola", "Oscar", "Carolina", "Martin", "Adriana", "Fernando",
-    "Monica", "Hector", "Beatriz", "Pablo", "Claudia", "Jorge", "Victoria",
-    "Roberto", "Raquel", "Arturo", "Teresa", "Emma", "Oliver", "Sara",
-    "Lukas", "Amelia", "Noah", "Hugo", "Mia", "Liam", "Ava",
+    "Ana", "Luis", "María", "Carlos", "Sofía", "Diego", "Valentina", "Javier",
+    "Camila", "Andrés", "Isabella", "Miguel", "Lucía", "Emilio", "Paula",
+    "Gabriel", "Renata", "Mateo", "Daniela", "Sebastián", "Natalia", "Tomás",
+    "Alejandra", "Rodrigo", "Elena", "Santiago", "Fernanda", "Nicolás", "Gabriela",
+    "Ricardo", "Paola", "Óscar", "Carolina", "Martín", "Adriana", "Fernando",
+    "Mónica", "Héctor", "Beatriz", "Pablo", "Claudia", "Jorge", "Victoria",
+    "Roberto", "Raquel", "Arturo", "Teresa", "Emma", "Hugo", "Sara",
+    "Mía", "Amelia", "Noé", "Olivia", "Iván", "Inés", "Bruno",
 ]
 LAST_NAMES = [
-    "Garcia", "Rodriguez", "Martinez", "Lopez", "Gonzalez", "Perez", "Sanchez",
-    "Ramirez", "Torres", "Flores", "Rivera", "Gomez", "Diaz", "Reyes", "Morales",
-    "Cruz", "Ortiz", "Gutierrez", "Chavez", "Ruiz", "Alvarez", "Mendoza",
-    "Vargas", "Castillo", "Jimenez", "Moreno", "Romero", "Herrera", "Medina",
+    "García", "Rodríguez", "Martínez", "López", "González", "Pérez", "Sánchez",
+    "Ramírez", "Torres", "Flores", "Rivera", "Gómez", "Díaz", "Reyes", "Morales",
+    "Cruz", "Ortiz", "Gutiérrez", "Chávez", "Ruiz", "Álvarez", "Mendoza",
+    "Vargas", "Castillo", "Jiménez", "Moreno", "Romero", "Herrera", "Medina",
     "Aguilar",
 ]
 NOTES_POOL = [
     None, None, None,
-    "window seat", "high chair", "birthday", "anniversary",
-    "gluten free", "peanut allergy", "wheelchair access",
-    "quiet table", "patio preferred", "booster seat",
+    "mesa junto a la ventana", "trona", "cumpleaños", "aniversario",
+    "sin gluten", "alergia a frutos secos", "acceso silla de ruedas",
+    "mesa tranquila", "preferencia patio", "alzador",
 ]
 
 
@@ -80,7 +82,10 @@ def main() -> int:
     rng = random.Random(RNG_SEED)
     init_db()
 
-    now = datetime.now(tz=timezone.utc)
+    # All reservation timestamps are stored in the restaurant's local timezone
+    # (Europe/Madrid by default) — see .env / app/config.py.
+    tz = ZoneInfo(get_settings().timezone)
+    now = datetime.now(tz=tz)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     # --- 75 past customers ---
