@@ -3,7 +3,9 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
+from app.config import get_settings
 from app.models import (
     ReservationCreate,
     ReservationUpdate,
@@ -21,7 +23,7 @@ CONFLICT_WINDOW = timedelta(hours=2)  # no two reservations on same table within
 
 _RESERVATION_COLUMNS = (
     "id, phone, customer_name, party_size, reservation_at, notes, status, "
-    "table_id, created_at, updated_at"
+    "table_id, confirmation_code, created_at, updated_at"
 )
 _TABLE_COLUMNS = "id, table_number, capacity, room_id, created_at"
 _ROOM_COLUMNS = "id, name, description, created_at, updated_at"
@@ -46,10 +48,21 @@ def _iso(dt: datetime) -> str:
 
 
 def _parse_ts(value: str) -> datetime:
-    # Handle trailing 'Z' which fromisoformat supports only from 3.11+.
+    """Parse an ISO-8601 timestamp, always returning a timezone-aware datetime.
+
+    - Trailing 'Z' is mapped to '+00:00' (fromisoformat handles 'Z' only on 3.11+,
+      and quoting it explicitly is unambiguous).
+    - Naive strings (no offset suffix) are interpreted as the restaurant's local
+      timezone — same convention as the Pydantic validator at the API boundary.
+      This keeps every datetime that flows through conflict-detection aware,
+      so we never crash on `aware - naive` comparisons.
+    """
     if value.endswith("Z"):
         value = value[:-1] + "+00:00"
-    return datetime.fromisoformat(value)
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo(get_settings().timezone))
+    return dt
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -336,6 +349,21 @@ def _attach_table(conn: sqlite3.Connection, row: dict[str, Any]) -> dict[str, An
     return row
 
 
+def _generate_unique_code(conn: sqlite3.Connection) -> str:
+    """Pick a confirmation code that isn't already taken. Retries on collision —
+    the 27**6 ≈ 387 M key space makes that path effectively never run, but the
+    loop is cheap belt-and-suspenders."""
+    from app.codes import generate_code
+    for _ in range(8):
+        code = generate_code()
+        existing = conn.execute(
+            "SELECT 1 FROM reservations WHERE confirmation_code = ?", (code,)
+        ).fetchone()
+        if existing is None:
+            return code
+    raise RuntimeError("could not generate a unique confirmation code")
+
+
 def create_reservation(
     conn: sqlite3.Connection, data: ReservationCreate
 ) -> dict[str, Any]:
@@ -346,13 +374,18 @@ def create_reservation(
         party_size=data.party_size,
         at=at,
     )
+    code = _generate_unique_code(conn)
     cur = conn.execute(
         """
         INSERT INTO reservations
-            (phone, customer_name, party_size, reservation_at, notes, table_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+            (phone, customer_name, party_size, reservation_at, notes,
+             table_id, confirmation_code)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (data.phone, data.customer_name, data.party_size, _iso(at), data.notes, table_id),
+        (
+            data.phone, data.customer_name, data.party_size, _iso(at),
+            data.notes, table_id, code,
+        ),
     )
     return get_reservation(conn, cur.lastrowid)  # type: ignore[return-value, arg-type]
 
@@ -363,6 +396,22 @@ def get_reservation(
     row = conn.execute(
         f"SELECT {_RESERVATION_COLUMNS} FROM reservations WHERE id = ?",
         (reservation_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _attach_table(conn, _row_to_dict(row))
+
+
+def get_reservation_by_code(
+    conn: sqlite3.Connection, raw_code: str
+) -> Optional[dict[str, Any]]:
+    """Look up a reservation by its confirmation code. Case-insensitive,
+    accepts dashes and spaces ('BUR-7K3' / 'bur 7k3' / 'BUR7K3')."""
+    from app.codes import normalize_code
+    code = normalize_code(raw_code)
+    row = conn.execute(
+        f"SELECT {_RESERVATION_COLUMNS} FROM reservations WHERE confirmation_code = ?",
+        (code,),
     ).fetchone()
     if row is None:
         return None

@@ -2,8 +2,21 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal, Optional
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.config import get_settings
+
+
+def _ensure_aware(dt: datetime) -> datetime:
+    """Naive datetimes are interpreted as wall-clock in the restaurant's
+    configured timezone (Europe/Madrid by default). Aware datetimes pass
+    through untouched. This is the single point at the API boundary that
+    eliminates the naive/aware mismatch downstream in conflict-detection."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo(get_settings().timezone))
+    return dt
 
 ReservationStatus = Literal["confirmed", "cancelled"]
 
@@ -97,6 +110,11 @@ class ReservationBase(BaseModel):
             raise ValueError("phone must contain only digits, optionally prefixed with '+'")
         return cleaned
 
+    @field_validator("reservation_at")
+    @classmethod
+    def _normalize_tz(cls, v: datetime) -> datetime:
+        return _ensure_aware(v)
+
 
 class ReservationCreate(ReservationBase):
     # If provided, the API will attempt to use this specific table (validated for
@@ -126,12 +144,18 @@ class ReservationUpdate(BaseModel):
             raise ValueError("phone must contain only digits, optionally prefixed with '+'")
         return cleaned
 
+    @field_validator("reservation_at")
+    @classmethod
+    def _normalize_tz(cls, v: Optional[datetime]) -> Optional[datetime]:
+        return _ensure_aware(v) if v is not None else v
+
 
 class ReservationOut(ReservationBase):
     id: int
     status: ReservationStatus
     table_id: Optional[int] = None
     table: Optional[TableOut] = None
+    confirmation_code: str
     created_at: datetime
     updated_at: datetime
 

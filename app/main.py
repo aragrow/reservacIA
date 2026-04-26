@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.config import get_settings
 from app.db import init_db
@@ -46,6 +47,24 @@ app.add_middleware(RateLimitMiddleware)         # then per-cid/per-IP throttle
 app.add_middleware(IPAllowlistMiddleware)       # then deny non-allowlisted IPs
 app.add_middleware(AuditLogMiddleware)          # then capture every final status
 app.add_middleware(SecurityHeadersMiddleware)   # outermost: stamp headers on every response
+
+
+# Catch-all handler for unhandled exceptions. FastAPI's HTTPException keeps its
+# own dedicated handler — this only fires for true crashes (TypeError, KeyError,
+# DB errors that escape CRUD, etc.), which previously surfaced as empty 500
+# responses with no log line. Now they emit a JSON body and a logged traceback
+# so future bugs are easy to triage from data/run.log.
+_log = logging.getLogger("reservacIA")
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, _exc: Exception):
+    # `_exc` is unused: logging.exception() pulls the active traceback from
+    # sys.exc_info(). The parameter is required by FastAPI's handler signature.
+    _log.exception(
+        "unhandled error on %s %s", request.method, request.url.path
+    )
+    return JSONResponse({"detail": "internal error"}, status_code=500)
 
 app.include_router(auth.router)
 app.include_router(rooms.router)

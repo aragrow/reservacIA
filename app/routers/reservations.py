@@ -27,6 +27,24 @@ def list_reservations(
         return crud.list_reservations(conn, phone=phone, status=status_, table_id=table_id)
 
 
+# Declared before /{reservation_id} so the literal-path route always wins. The
+# integer typing on reservation_id would also reject "by-code" with 422, but
+# explicit ordering is the safer pattern.
+@router.get("/by-code/{code}", response_model=ReservationOut)
+def get_by_code(code: str) -> dict:
+    """Look up a reservation by its short confirmation code (PNR-style).
+
+    Case-insensitive; accepts dashes/spaces, e.g. 'BUR-7K3', 'bur 7k3', 'BUR7K3'.
+    Returns the same 404 shape regardless of whether the code is unknown,
+    cancelled, or simply malformed — no enumeration leak.
+    """
+    with connection() as conn:
+        row = crud.get_reservation_by_code(conn, code)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reservation not found")
+    return row
+
+
 @router.get("/{reservation_id}", response_model=ReservationOut)
 def get_one(reservation_id: int) -> dict:
     with connection() as conn:

@@ -81,10 +81,53 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_reservations_table ON reservations(table_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_reservations_time  ON reservations(reservation_at)")
 
+    if "confirmation_code" not in res_cols:
+        # Add column nullable initially — the lazy backfill below populates any
+        # NULLs every startup, so every row ends up with a code.
+        conn.execute("ALTER TABLE reservations ADD COLUMN confirmation_code TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_reservations_code "
+        "ON reservations(confirmation_code) WHERE confirmation_code IS NOT NULL"
+    )
+
     tbl_cols = {row[1] for row in conn.execute("PRAGMA table_info(tables)").fetchall()}
     if "room_id" not in tbl_cols:
         conn.execute("ALTER TABLE tables ADD COLUMN room_id INTEGER REFERENCES rooms(id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tables_room ON tables(room_id)")
+
+    _backfill_confirmation_codes(conn)
+
+
+def _backfill_confirmation_codes(conn: sqlite3.Connection) -> int:
+    """Populate confirmation_code on every reservation that doesn't have one.
+
+    Runs on every init_db() call but is cheap when there's nothing to do
+    (single LIMIT-1 probe). Returns the number of rows updated."""
+    has_null = conn.execute(
+        "SELECT 1 FROM reservations WHERE confirmation_code IS NULL LIMIT 1"
+    ).fetchone()
+    if has_null is None:
+        return 0
+    # Local import to avoid a top-level cycle (codes has no other deps).
+    from app.codes import generate_code
+    nulls = conn.execute(
+        "SELECT id FROM reservations WHERE confirmation_code IS NULL"
+    ).fetchall()
+    updated = 0
+    for row in nulls:
+        # Tiny retry loop — collisions on a 387M-key space are vanishingly rare.
+        for _ in range(8):
+            code = generate_code()
+            try:
+                conn.execute(
+                    "UPDATE reservations SET confirmation_code = ? WHERE id = ?",
+                    (code, row[0]),
+                )
+                updated += 1
+                break
+            except sqlite3.IntegrityError:
+                continue
+    return updated
 
 
 def init_db() -> None:

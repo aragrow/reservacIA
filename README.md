@@ -69,6 +69,16 @@ Three conveniences, all loopback-guarded:
 
 Interactive OpenAPI docs: `http://localhost:8765/docs`. In local mode (`LOCAL_MODE=true`) the Authorize dialog is pre-filled automatically on page load — just open and go. In production mode, click **Authorize** 🔒 and paste an access token into the `HTTPBearer` field.
 
+## Timezone handling
+
+`reservation_at` accepts ISO 8601 with **or without** a timezone offset.
+Naive timestamps (e.g. `"2026-05-01T19:30:00"`) are interpreted as
+**`TIMEZONE` from `.env`** — `Europe/Madrid` by default. Aware timestamps
+(`+02:00`, `Z`, etc.) are preserved as-is. The 2-hour conflict rule and
+all other datetime arithmetic operate on timezone-aware values, so naive
+and aware inputs that represent the same wall-clock moment in Madrid
+collide as expected.
+
 ## Quick usage
 
 ```bash
