@@ -28,6 +28,8 @@ def env_setup() -> Iterator[None]:
             "RATE_LIMIT_DATA_PER_MINUTE": "10000",
             "RATE_LIMIT_AUTH_PER_MINUTE": "10000",
             "RATE_LIMIT_OTHER_PER_MINUTE": "10000",
+            # Force the worker on for tests, regardless of the .env kill switch.
+            "SUPPRESS_NOTIFICATIONS": "false",
         }
     )
     yield

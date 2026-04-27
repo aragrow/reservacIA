@@ -552,3 +552,92 @@ def test_worker_swallows_send_failures_and_marks_for_retry(client, auth_headers)
     assert created["status"] == "pending"
     assert created["attempts"] >= 1
     assert "simulated provider outage" in (created["last_error"] or "")
+
+
+def test_suppress_notifications_drops_lifecycle_but_allows_custom(
+    monkeypatch, client, auth_headers
+):
+    """With the kill switch on:
+       - lifecycle kinds are not enqueued (queue stays empty for the booking)
+       - agent-driven `custom` messages still enqueue and dispatch normally,
+         so the agent's outbound activity remains auditable.
+    """
+    from app.config import get_settings
+    monkeypatch.setenv("SUPPRESS_NOTIFICATIONS", "true")
+    get_settings.cache_clear()
+    try:
+        rid = client.post(
+            "/reservations",
+            json=_payload(reservation_at=_future_iso(days=7)),
+            headers=auth_headers,
+        ).json()["id"]
+        # Lifecycle (created + reminder) suppressed → no rows for this booking.
+        assert _list_queue(rid) == []
+
+        # Agent POST succeeds with 201 and a tracked row.
+        resp = client.post(
+            "/notifications",
+            json={"phone": "+34977000777", "body": "Recordatorio del agente."},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        nid = resp.json()["id"]
+
+        # Worker still dispatches custom rows even while suppressed.
+        class MockNotifier:
+            last: dict | None = None
+            def send(self, *, phone: str, body: str) -> None:
+                self.last = {"phone": phone, "body": body}
+
+        from app.notifications.worker import process_batch
+        notifier = MockNotifier()
+        sent = process_batch(notifier, get_settings())
+
+        assert sent == 1
+        assert notifier.last == {
+            "phone": "+34977000777", "body": "Recordatorio del agente."
+        }
+        from app.db import connection
+        from app.notifications import queue
+        with connection() as conn:
+            row = queue.get_notification(conn, nid)
+        assert row["status"] == "sent"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_suppress_notifications_worker_skips_preexisting_lifecycle_rows(
+    monkeypatch, client, auth_headers
+):
+    """If lifecycle rows were already in the queue before the kill switch
+    flipped on, the worker must not dispatch them — only `custom` rows go out."""
+    # Create reservation while suppression is off → lifecycle rows enqueue.
+    rid = client.post(
+        "/reservations",
+        json=_payload(reservation_at=_future_iso(days=7)),
+        headers=auth_headers,
+    ).json()["id"]
+    pre = _list_queue(rid)
+    assert any(r["kind"] == "created" for r in pre)
+
+    # Now flip the kill switch on.
+    from app.config import get_settings
+    monkeypatch.setenv("SUPPRESS_NOTIFICATIONS", "true")
+    get_settings.cache_clear()
+    try:
+        class TattleNotifier:
+            calls = 0
+            def send(self, *, phone: str, body: str) -> None:
+                self.calls += 1
+
+        from app.notifications.worker import process_batch
+        notifier = TattleNotifier()
+        sent = process_batch(notifier, get_settings())
+
+        assert sent == 0
+        assert notifier.calls == 0
+        created = next(r for r in _list_queue(rid) if r["kind"] == "created")
+        assert created["status"] == "pending"
+        assert created["attempts"] == 0
+    finally:
+        get_settings.cache_clear()

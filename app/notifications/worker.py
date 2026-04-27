@@ -32,7 +32,10 @@ async def run_forever(
     settings = settings or get_settings()
     notifier = notifier or build_notifier(settings)
     interval = settings.notification_worker_interval_seconds
-    _log.info("notification worker starting (interval=%ss)", interval)
+    _log.info(
+        "notification worker starting (interval=%ss, suppressed=%s)",
+        interval, settings.suppress_notifications,
+    )
     try:
         while True:
             try:
@@ -51,8 +54,9 @@ def process_batch(notifier: Notifier, settings: Settings) -> int:
     """One worker tick: claim due rows in a short transaction, then dispatch
     them outside the transaction so a slow provider doesn't hold a write
     lock. Returns the number of rows successfully sent."""
+    only_kind = "custom" if settings.suppress_notifications else None
     with connection() as conn:
-        due = queue.pick_due(conn, limit=20)
+        due = queue.pick_due(conn, limit=20, only_kind=only_kind)
 
     sent = 0
     for row in due:

@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     reminder_lead_hours: int = 24               # send reminder N hours before reservation_at
     notification_worker_interval_seconds: int = 30
     notification_max_attempts: int = 5
+    # Kill switch: worker stops dispatching while true. Rows continue to be
+    # enqueued and remain 'pending', so flipping back to false resumes sending.
+    suppress_notifications: bool = False
     # Pre-issued dev tokens kept in .env purely for convenience. Only surfaced
     # by /docs examples when local_mode=true. Optional — /_debug/dev-token
     # issues fresh ones on demand.

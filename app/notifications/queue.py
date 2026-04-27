@@ -31,17 +31,28 @@ def enqueue(
     phone: str,
     scheduled_at: datetime,
     body: str,
-) -> int:
-    """Insert a pending notification row. Returns the new id.
+) -> int | None:
+    """Insert a pending notification row. Returns the new id, or None when
+    the kill switch (`suppress_notifications`) is on — in which case nothing
+    is written to the queue.
 
     `reservation_id` is optional — agent-driven `custom` messages can be
     untethered from any booking. `scheduled_at` is normalised to UTC ISO
     before storage so that the `pick_due` comparison (a lexical string
     compare in SQLite) sorts correctly across rows that came in with
     different offsets.
+
+    Kill switch: when `suppress_notifications` is on, lifecycle kinds
+    (`created` / `updated` / `cancelled` / `reminder`) are dropped so they
+    never enter the queue. `custom` messages — the only kind an agent can
+    enqueue via the API — are exempt so the agent's outbound activity stays
+    auditable through `GET /notifications`.
     """
+    settings = get_settings()
+    if settings.suppress_notifications and kind != "custom":
+        return None
     if scheduled_at.tzinfo is None:
-        scheduled_at = scheduled_at.replace(tzinfo=ZoneInfo(get_settings().timezone))
+        scheduled_at = scheduled_at.replace(tzinfo=ZoneInfo(settings.timezone))
     scheduled_at_utc = scheduled_at.astimezone(timezone.utc)
     cur = conn.execute(
         """
@@ -77,7 +88,7 @@ def cancel_pending_reminders_for(
 
 
 def pick_due(
-    conn: sqlite3.Connection, *, limit: int = 20
+    conn: sqlite3.Connection, *, limit: int = 20, only_kind: str | None = None
 ) -> list[dict[str, Any]]:
     """Atomically claim up to `limit` pending rows whose scheduled_at <= now,
     flipping them to 'in_flight'. Returns the claimed rows.
@@ -85,17 +96,31 @@ def pick_due(
     Uses an UPDATE-with-subselect pattern instead of UPDATE...RETURNING to keep
     compatibility with older SQLite builds. The two-step approach is fine here
     because there's only one worker process.
+
+    `only_kind` restricts the claim to rows of one kind — used by the worker
+    to dispatch only agent-driven `custom` rows while the kill switch is on.
     """
     now_iso = _now_utc_iso()
-    rows = conn.execute(
-        """
-        SELECT id FROM notifications
-         WHERE status = 'pending' AND scheduled_at <= ?
-         ORDER BY scheduled_at ASC, id ASC
-         LIMIT ?
-        """,
-        (now_iso, limit),
-    ).fetchall()
+    if only_kind is None:
+        rows = conn.execute(
+            """
+            SELECT id FROM notifications
+             WHERE status = 'pending' AND scheduled_at <= ?
+             ORDER BY scheduled_at ASC, id ASC
+             LIMIT ?
+            """,
+            (now_iso, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id FROM notifications
+             WHERE status = 'pending' AND scheduled_at <= ? AND kind = ?
+             ORDER BY scheduled_at ASC, id ASC
+             LIMIT ?
+            """,
+            (now_iso, only_kind, limit),
+        ).fetchall()
     if not rows:
         return []
     ids = [r["id"] for r in rows]

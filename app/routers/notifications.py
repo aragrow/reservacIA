@@ -59,6 +59,9 @@ def create(body: NotificationCreate) -> dict:
             scheduled_at=when,
             body=body.body,
         )
+        # `custom` is exempt from SUPPRESS_NOTIFICATIONS, so enqueue always
+        # returns an id here.
+        assert new_id is not None
         row = queue.get_notification(conn, new_id)
     assert row is not None
     return row
