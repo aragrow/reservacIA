@@ -212,3 +212,50 @@ class ReviewOut(BaseModel):
     comments: list[ReviewCommentOut] = []
     created_at: datetime
     updated_at: datetime
+
+
+# --- notifications ----------------------------------------------------------
+
+NotificationKind = Literal[
+    "created", "updated", "cancelled", "reminder", "custom"
+]
+NotificationStatus = Literal[
+    "pending", "in_flight", "sent", "failed", "cancelled"
+]
+
+
+class NotificationOut(BaseModel):
+    id: int
+    reservation_id: Optional[int] = None
+    kind: NotificationKind
+    phone: str
+    scheduled_at: datetime
+    status: NotificationStatus
+    attempts: int
+    last_error: Optional[str] = None
+    body: str
+    sent_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class NotificationCreate(BaseModel):
+    """Body for `POST /notifications` — agent-driven custom message.
+
+    The endpoint hardcodes `kind='custom'`; agents cannot impersonate the
+    reservation lifecycle events (`created` / `updated` / `cancelled` /
+    `reminder`) which are reserved for CRUD-driven hooks.
+    """
+    phone: str = Field(min_length=_PHONE_MIN, max_length=_PHONE_MAX)
+    body: str = Field(min_length=1, max_length=2000)
+    reservation_id: Optional[int] = Field(default=None, ge=1)
+    scheduled_at: Optional[datetime] = None  # default: now (immediate dispatch)
+
+    @field_validator("phone")
+    @classmethod
+    def _phone_digits(cls, v: str) -> str:
+        cleaned = v.strip()
+        stripped = cleaned.lstrip("+")
+        if not stripped.isdigit():
+            raise ValueError("phone must contain only digits, optionally prefixed with '+'")
+        return cleaned

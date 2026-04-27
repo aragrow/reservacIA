@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -15,14 +16,27 @@ from app.middleware import (
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
 )
-from app.routers import auth, debug, reservations, reviews, rooms, tables
+from app.notifications.worker import run_forever as run_notification_worker
+from app.routers import auth, debug, notifications, reservations, reviews, rooms, tables
 from app.security import IPAllowlistMiddleware
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
-    yield
+    # Start the notification worker as a background task. Cancelled cleanly on
+    # shutdown; in-flight sends get up to 5s to wrap up.
+    worker_task = asyncio.create_task(
+        run_notification_worker(), name="notification-worker"
+    )
+    try:
+        yield
+    finally:
+        worker_task.cancel()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
 
 
 settings = get_settings()
@@ -71,6 +85,7 @@ app.include_router(rooms.router)
 app.include_router(tables.router)
 app.include_router(reservations.router)
 app.include_router(reviews.router)
+app.include_router(notifications.router)
 if settings.local_mode:
     app.include_router(debug.router)
 

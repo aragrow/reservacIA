@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     rate_limit_auth_per_minute: int = 5         # per-IP limit on /auth/token (brute-force throttle)
     rate_limit_other_per_minute: int = 30       # per-cid limit on /auth/refresh and /_debug/*
     max_body_bytes: int = 64 * 1024             # reject bodies larger than this (413)
+
+    # Notifications (see app/notifications/). v1 is console/log only.
+    notifier: str = "console"                   # 'console' | 'twilio' | 'disabled'
+    reminder_lead_hours: int = 24               # send reminder N hours before reservation_at
+    notification_worker_interval_seconds: int = 30
+    notification_max_attempts: int = 5
     # Pre-issued dev tokens kept in .env purely for convenience. Only surfaced
     # by /docs examples when local_mode=true. Optional — /_debug/dev-token
     # issues fresh ones on demand.

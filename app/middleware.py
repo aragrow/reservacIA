@@ -141,7 +141,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     """
     _store = _SlidingWindow()
 
-    DATA_PREFIXES = ("/reservations", "/rooms", "/tables", "/reviews")
+    DATA_PREFIXES = ("/reservations", "/rooms", "/tables", "/reviews", "/notifications")
     FREE_PREFIXES = ("/health", "/docs", "/redoc", "/openapi.json", "/app", "/static")
 
     def _classify(self, path: str) -> str:

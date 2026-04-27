@@ -364,6 +364,44 @@ def _generate_unique_code(conn: sqlite3.Connection) -> str:
     raise RuntimeError("could not generate a unique confirmation code")
 
 
+def _enqueue_notification(
+    conn: sqlite3.Connection,
+    reservation: dict[str, Any],
+    *,
+    kind: str,
+    scheduled_at: datetime,
+) -> None:
+    """Pre-render the Spanish template and insert one row into the queue."""
+    from app.notifications import queue as notif_queue
+    from app.notifications.templates import render as render_notif
+
+    body = render_notif(kind, reservation)
+    notif_queue.enqueue(
+        conn,
+        reservation_id=reservation["id"],
+        kind=kind,
+        phone=reservation["phone"],
+        scheduled_at=scheduled_at,
+        body=body,
+    )
+
+
+def _now_local() -> datetime:
+    from zoneinfo import ZoneInfo
+    return datetime.now(tz=ZoneInfo(get_settings().timezone))
+
+
+def _reminder_time_for(reservation: dict[str, Any]) -> datetime:
+    """Reservation-time minus the configured lead, never in the past."""
+    settings = get_settings()
+    at = reservation["reservation_at"]
+    if isinstance(at, str):
+        at = _parse_ts(at)
+    target = at - timedelta(hours=settings.reminder_lead_hours)
+    now = _now_local()
+    return target if target > now else now
+
+
 def create_reservation(
     conn: sqlite3.Connection, data: ReservationCreate
 ) -> dict[str, Any]:
@@ -387,7 +425,15 @@ def create_reservation(
             data.notes, table_id, code,
         ),
     )
-    return get_reservation(conn, cur.lastrowid)  # type: ignore[return-value, arg-type]
+    row = get_reservation(conn, cur.lastrowid)  # type: ignore[arg-type]
+    assert row is not None
+    # Two queue entries on every create: instant 'created' + scheduled 'reminder'
+    # (immediate if the reservation is < lead-hours away).
+    _enqueue_notification(conn, row, kind="created", scheduled_at=_now_local())
+    _enqueue_notification(
+        conn, row, kind="reminder", scheduled_at=_reminder_time_for(row)
+    )
+    return row
 
 
 def get_reservation(
@@ -502,7 +548,25 @@ def update_reservation(
     conn.execute(
         f"UPDATE reservations SET {', '.join(sets)} WHERE id = ?", params
     )
-    return get_reservation(conn, reservation_id)
+    updated = get_reservation(conn, reservation_id)
+    assert updated is not None
+
+    # Notification side-effects. Trigger an `updated` message only when one
+    # of the user-visible fields moved; pure note/customer-name edits are
+    # silent. Reschedule the reminder when the *time* changes.
+    notable = {"reservation_at", "party_size", "table_id"} & changes.keys()
+    if notable:
+        _enqueue_notification(
+            conn, updated, kind="updated", scheduled_at=_now_local()
+        )
+    if "reservation_at" in changes:
+        from app.notifications import queue as notif_queue
+        notif_queue.cancel_pending_reminders_for(conn, reservation_id)
+        _enqueue_notification(
+            conn, updated, kind="reminder",
+            scheduled_at=_reminder_time_for(updated),
+        )
+    return updated
 
 
 def cancel_reservation(
@@ -521,7 +585,17 @@ def cancel_reservation(
         """,
         (reservation_id,),
     )
-    return get_reservation(conn, reservation_id)
+    cancelled = get_reservation(conn, reservation_id)
+    assert cancelled is not None
+
+    # Send the cancellation confirmation, then drop any pending reminders so
+    # the customer doesn't get reminded about something we just cancelled.
+    from app.notifications import queue as notif_queue
+    _enqueue_notification(
+        conn, cancelled, kind="cancelled", scheduled_at=_now_local()
+    )
+    notif_queue.cancel_pending_reminders_for(conn, reservation_id)
+    return cancelled
 
 
 # --- reviews -----------------------------------------------------------------

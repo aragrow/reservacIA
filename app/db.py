@@ -62,6 +62,28 @@ CREATE TABLE IF NOT EXISTS review_comments (
     updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_review_comments_review ON review_comments(review_id, created_at);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    reservation_id  INTEGER REFERENCES reservations(id),
+    kind            TEXT    NOT NULL CHECK (kind IN
+                            ('created','updated','cancelled','reminder','custom')),
+    phone           TEXT    NOT NULL,
+    scheduled_at    TEXT    NOT NULL,
+    status          TEXT    NOT NULL DEFAULT 'pending'
+                            CHECK (status IN
+                            ('pending','in_flight','sent','failed','cancelled')),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    body            TEXT    NOT NULL,
+    sent_at         TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_due
+    ON notifications(status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_reservation
+    ON notifications(reservation_id);
 """
 # Indexes on late-added columns (`table_id`, `room_id`) live in _migrate()
 # so pre-existing databases get the columns before the indexes try to use them.
@@ -90,12 +112,76 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "ON reservations(confirmation_code) WHERE confirmation_code IS NOT NULL"
     )
 
+    _migrate_notifications_table(conn)
+
     tbl_cols = {row[1] for row in conn.execute("PRAGMA table_info(tables)").fetchall()}
     if "room_id" not in tbl_cols:
         conn.execute("ALTER TABLE tables ADD COLUMN room_id INTEGER REFERENCES rooms(id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tables_room ON tables(room_id)")
 
     _backfill_confirmation_codes(conn)
+
+
+def _migrate_notifications_table(conn: sqlite3.Connection) -> None:
+    """Rebuild `notifications` if it predates the agent-driven additions.
+
+    Two old shapes to fix in one pass:
+      - `reservation_id INTEGER NOT NULL`  →  becomes nullable so the agent
+         can post notifications not tied to any reservation.
+      - kind CHECK without `'custom'`      →  add the new kind so agent
+         messages don't have to pretend to be a lifecycle event.
+
+    SQLite can't change either constraint in place, so this rebuilds the table.
+    Idempotent: skips when the stored CREATE statement already contains 'custom'.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='notifications'"
+    ).fetchone()
+    if row is None:
+        # Table will be created fresh from SCHEMA — nothing to migrate.
+        return
+    create_sql = row["sql"] or ""
+    if "'custom'" in create_sql:
+        # Already on the new shape.
+        return
+
+    conn.execute("ALTER TABLE notifications RENAME TO _notifications_old")
+    conn.executescript(
+        """
+        CREATE TABLE notifications (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            reservation_id  INTEGER REFERENCES reservations(id),
+            kind            TEXT    NOT NULL CHECK (kind IN
+                                    ('created','updated','cancelled','reminder','custom')),
+            phone           TEXT    NOT NULL,
+            scheduled_at    TEXT    NOT NULL,
+            status          TEXT    NOT NULL DEFAULT 'pending'
+                                    CHECK (status IN
+                                    ('pending','in_flight','sent','failed','cancelled')),
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            last_error      TEXT,
+            body            TEXT    NOT NULL,
+            sent_at         TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_notifications_due
+            ON notifications(status, scheduled_at);
+        CREATE INDEX IF NOT EXISTS idx_notifications_reservation
+            ON notifications(reservation_id);
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO notifications
+            (id, reservation_id, kind, phone, scheduled_at, status, attempts,
+             last_error, body, sent_at, created_at, updated_at)
+        SELECT id, reservation_id, kind, phone, scheduled_at, status, attempts,
+               last_error, body, sent_at, created_at, updated_at
+          FROM _notifications_old
+        """
+    )
+    conn.execute("DROP TABLE _notifications_old")
 
 
 def _backfill_confirmation_codes(conn: sqlite3.Connection) -> int:

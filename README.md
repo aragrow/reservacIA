@@ -69,6 +69,39 @@ Three conveniences, all loopback-guarded:
 
 Interactive OpenAPI docs: `http://localhost:8765/docs`. In local mode (`LOCAL_MODE=true`) the Authorize dialog is pre-filled automatically on page load — just open and go. In production mode, click **Authorize** 🔒 and paste an access token into the `HTTPBearer` field.
 
+## Notifications (transactional messages)
+
+Every reservation lifecycle event enqueues a Spanish-language message for the
+customer:
+
+| Event | Message kind | When it fires |
+|---|---|---|
+| `POST /reservations` | `created` | immediately |
+| `POST /reservations` | `reminder` | `reservation_at − REMINDER_LEAD_HOURS` (or immediately if that's already in the past) |
+| `PATCH /reservations/{id}` (time / party / table) | `updated` | immediately |
+| `PATCH /reservations/{id}` (time changed) | new `reminder` | recomputed; the old reminder is cancelled |
+| `POST /reservations/{id}/cancel` | `cancelled` | immediately; any pending reminder is cancelled |
+
+Patches that only touch `notes` or `customer_name` are silent.
+
+The producer (CRUD) and the consumer (worker) are decoupled by a
+`notifications` table that acts as a durable queue. The worker is an in-process
+async loop started in FastAPI's `lifespan`, polling every `NOTIFICATION_WORKER_INTERVAL_SECONDS` (default 30s) and dispatching due rows through the configured `Notifier`.
+
+**v1 ships console-only.** `NOTIFIER=console` writes each dispatch to
+`data/run.log` and appends a structured row to `data/audit.jsonl`. No Twilio, no
+WhatsApp, no API keys. The `Notifier` protocol means a real provider can slot
+in later without touching CRUD or the worker.
+
+Knobs in `.env` / `.env.example`:
+
+| key | default | purpose |
+|---|---|---|
+| `NOTIFIER` | `console` | `console` (logs) or `disabled` (no-op). Twilio impl pending. |
+| `REMINDER_LEAD_HOURS` | `24` | how far ahead of `reservation_at` the reminder fires |
+| `NOTIFICATION_WORKER_INTERVAL_SECONDS` | `30` | how often the worker polls the queue |
+| `NOTIFICATION_MAX_ATTEMPTS` | `5` | after this many failed sends a row transitions to `status='failed'` |
+
 ## Timezone handling
 
 `reservation_at` accepts ISO 8601 with **or without** a timezone offset.
