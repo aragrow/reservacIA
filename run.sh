@@ -18,6 +18,11 @@ PORT="${RESERVACIA_PORT:-8765}"
 PID_FILE="./data/run.pid"
 LOG_FILE="./data/run.log"
 
+# 0.0.0.0 is a bind address, not a URL host — show localhost in printed links.
+DOCS_HOST="$HOST"
+[[ "$DOCS_HOST" == "0.0.0.0" ]] && DOCS_HOST="localhost"
+DOCS_URL="http://${DOCS_HOST}:${PORT}/docs"
+
 mkdir -p ./data
 
 if ! command -v uv >/dev/null 2>&1; then
@@ -57,6 +62,7 @@ start() {
   sleep 0.5
   if is_running; then
     echo "started (pid $(cat "$PID_FILE")) on ${HOST}:${PORT} — logs: $LOG_FILE"
+    echo "docs: $DOCS_URL"
   else
     echo "failed to start — see $LOG_FILE" >&2
     rm -f "$PID_FILE"
@@ -67,6 +73,7 @@ start() {
 status() {
   if is_running; then
     echo "running (pid $(cat "$PID_FILE")) on ${HOST}:${PORT}"
+    echo "docs: $DOCS_URL"
   else
     echo "not running"
   fi
