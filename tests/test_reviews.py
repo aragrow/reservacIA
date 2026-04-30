@@ -33,7 +33,9 @@ def test_create_read_update_happy_path(client, auth_headers):
     out = updated.json()
     assert out["rating"] == 4
     assert out["body"].startswith("Good")
-    assert out["reviewer_name"] == "Jane Doe"  # unchanged
+    # PII (reviewer_name, reviewer_city) is not exposed through reads.
+    assert "reviewer_name" not in out
+    assert "reviewer_city" not in out
 
 
 def test_comments_embedded_in_chronological_order(client, auth_headers):

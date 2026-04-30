@@ -23,8 +23,12 @@ def list_reservations(
     status_: Optional[ReservationStatus] = Query(default=None, alias="status"),
     table_id: Optional[int] = Query(default=None, ge=1),
 ) -> list[dict]:
+    # Hard cap of 5 — privacy/UX policy, not agent-tunable. Existing filters
+    # and ordering (`reservation_at ASC, id ASC`) are unchanged.
     with connection() as conn:
-        return crud.list_reservations(conn, phone=phone, status=status_, table_id=table_id)
+        return crud.list_reservations(
+            conn, phone=phone, status=status_, table_id=table_id, limit=5
+        )
 
 
 # Declared before /{reservation_id} so the literal-path route always wins. The

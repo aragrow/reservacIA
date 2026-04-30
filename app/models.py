@@ -150,9 +150,15 @@ class ReservationUpdate(BaseModel):
         return _ensure_aware(v) if v is not None else v
 
 
-class ReservationOut(ReservationBase):
+class ReservationOut(BaseModel):
+    # Deliberately does NOT inherit ReservationBase: phone and customer_name
+    # are PII and must not leak through reads. Agents identify a booking by
+    # `id` or `confirmation_code` only.
     id: int
     status: ReservationStatus
+    party_size: int
+    reservation_at: datetime
+    notes: Optional[str] = None
     table_id: Optional[int] = None
     table: Optional[TableOut] = None
     confirmation_code: str
@@ -178,10 +184,12 @@ class ReviewCommentUpdate(BaseModel):
 
 
 class ReviewCommentOut(BaseModel):
+    # `author_name` omitted — comment authors are clients (or staff) and we
+    # don't expose names through reads. `author_role` keeps the coarse
+    # restaurant-vs-customer distinction.
     id: int
     review_id: int
     author_role: ReviewAuthorRole
-    author_name: str
     body: str
     created_at: datetime
     updated_at: datetime
@@ -204,9 +212,9 @@ class ReviewUpdate(BaseModel):
 
 
 class ReviewOut(BaseModel):
+    # `reviewer_name` and `reviewer_city` omitted — both are client-identifying.
+    # Reviews are still discoverable by id, rating, and body content.
     id: int
-    reviewer_name: str
-    reviewer_city: Optional[str] = None
     rating: int
     body: str
     comments: list[ReviewCommentOut] = []
@@ -225,10 +233,12 @@ NotificationStatus = Literal[
 
 
 class NotificationOut(BaseModel):
+    # `phone` is intentionally omitted — it's the recipient and is PII. The
+    # rendered `body` is safe: templates substitute date/time/party/room/code
+    # only, never the customer's name.
     id: int
     reservation_id: Optional[int] = None
     kind: NotificationKind
-    phone: str
     scheduled_at: datetime
     status: NotificationStatus
     attempts: int

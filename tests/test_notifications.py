@@ -310,7 +310,8 @@ def test_list_endpoint_filters_by_phone(client, auth_headers):
     assert resp.status_code == 200
     rows = resp.json()
     assert len(rows) == 2  # created + reminder for the one matching phone
-    assert all(r["phone"] == "+34611111111" for r in rows)
+    # `phone` filter still works on the search; the response itself omits phone.
+    assert all("phone" not in r for r in rows)
     assert all(r["reservation_id"] == rid_a for r in rows)
 
 
@@ -412,7 +413,8 @@ def test_post_creates_custom_notification_without_reservation(client, auth_heade
     assert out["status"] == "pending"
     assert out["reservation_id"] is None
     assert out["body"] == "Mensaje del agente — bienvenido."
-    assert out["phone"] == "+34977000111"
+    # phone is the destination and is PII — must not be echoed back.
+    assert "phone" not in out
 
 
 def test_post_with_existing_reservation_id_succeeds(client, auth_headers):

@@ -469,6 +469,7 @@ def list_reservations(
     phone: Optional[str] = None,
     status: Optional[str] = None,
     table_id: Optional[int] = None,
+    limit: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     clauses: list[str] = []
     params: list[Any] = []
@@ -482,11 +483,14 @@ def list_reservations(
         clauses.append("table_id = ?")
         params.append(table_id)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    rows = conn.execute(
+    sql = (
         f"SELECT {_RESERVATION_COLUMNS} FROM reservations {where} "
-        "ORDER BY reservation_at ASC, id ASC",
-        params,
-    ).fetchall()
+        "ORDER BY reservation_at ASC, id ASC"
+    )
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
     return [_attach_table(conn, _row_to_dict(r)) for r in rows]
 
 

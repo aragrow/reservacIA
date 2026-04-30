@@ -33,23 +33,68 @@ def test_create_and_fetch(client, auth_headers):
     body = create.json()
     rid = body["id"]
     assert body["status"] == "confirmed"
-    assert body["phone"] == "+15551234567"
+    # PII (phone, customer_name) must NOT appear in responses.
+    assert "phone" not in body
+    assert "customer_name" not in body
 
     got = client.get(f"/reservations/{rid}", headers=auth_headers)
     assert got.status_code == 200
-    assert got.json()["id"] == rid
+    fetched = got.json()
+    assert fetched["id"] == rid
+    assert "phone" not in fetched
+    assert "customer_name" not in fetched
 
 
 def test_list_filters_by_phone(client, auth_headers):
-    client.post("/reservations", json=_payload(phone="+15550000001"), headers=auth_headers)
-    client.post("/reservations", json=_payload(phone="+15550000002"), headers=auth_headers)
-    client.post("/reservations", json=_payload(phone="+15550000001", customer_name="Repeat"), headers=auth_headers)
+    """The `phone` query filter still works (search behaviour unchanged), but
+    the response no longer echoes phone — callers identify rows by id /
+    confirmation_code."""
+    a = client.post(
+        "/reservations", json=_payload(phone="+15550000001"), headers=auth_headers
+    ).json()["id"]
+    client.post(
+        "/reservations", json=_payload(phone="+15550000002"), headers=auth_headers
+    )
+    b = client.post(
+        "/reservations",
+        json=_payload(phone="+15550000001", customer_name="Repeat"),
+        headers=auth_headers,
+    ).json()["id"]
 
-    resp = client.get("/reservations", params={"phone": "+15550000001"}, headers=auth_headers)
+    resp = client.get(
+        "/reservations", params={"phone": "+15550000001"}, headers=auth_headers
+    )
     assert resp.status_code == 200
     rows = resp.json()
     assert len(rows) == 2
-    assert {r["phone"] for r in rows} == {"+15550000001"}
+    assert {r["id"] for r in rows} == {a, b}
+    assert all("phone" not in r and "customer_name" not in r for r in rows)
+
+
+def test_list_caps_at_5_rows(client, auth_headers):
+    """GET /reservations applies LIMIT 5 over the existing
+    `reservation_at ASC, id ASC` order. Search/filter behaviour is unchanged
+    — only the row count is."""
+    # Seed 7 reservations with distinct, deterministic future times so the
+    # ASC sort is unambiguous.
+    ids: list[int] = []
+    for day in range(2, 9):  # 7 reservations on days +2 .. +8
+        resp = client.post(
+            "/reservations",
+            json=_payload(
+                phone=f"+1555000{day:04d}",
+                reservation_at=_future_naive_iso(days=day, hour=19, minute=0),
+            ),
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        ids.append(resp.json()["id"])
+
+    rows = client.get("/reservations", headers=auth_headers).json()
+    assert len(rows) == 5
+    # The LIMIT keeps the first 5 of the existing sort — the earliest 5
+    # reservation_ats, which are the first 5 we created.
+    assert [r["id"] for r in rows] == ids[:5]
 
 
 def test_patch_updates_fields(client, auth_headers):
@@ -63,9 +108,11 @@ def test_patch_updates_fields(client, auth_headers):
     )
     assert resp.status_code == 200
     updated = resp.json()
+    assert updated["id"] == rid
     assert updated["party_size"] == 6
     assert updated["notes"] == "high chair"
-    assert updated["phone"] == created["phone"]
+    assert "phone" not in updated
+    assert "customer_name" not in updated
 
 
 def test_cancel_soft_deletes(client, auth_headers):
