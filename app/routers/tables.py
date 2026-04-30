@@ -13,6 +13,7 @@ from app.models import (
     ReservationStatus,
     TableCreate,
     TableOut,
+    _ensure_aware,
     TableUpdate,
 )
 from app.security import require_agent
@@ -62,7 +63,14 @@ def list_available(
     """Tables with no confirmed reservation within 2 hours of `at`.
 
     Ordered smallest-capacity-first so the first element is the best fit.
+
+    Naive `at` (no `Z` / `+HH:MM` suffix) is interpreted as the restaurant's
+    local timezone — same convention the Pydantic validators use for
+    `reservation_at` on POST/PATCH /reservations. Without this, the
+    aware-vs-naive subtraction in the conflict-window check raised
+    TypeError → 500.
     """
+    at = _ensure_aware(at)
     with connection() as conn:
         return crud.find_all_available_tables(
             conn, at=at, party_size=party_size, room_id=room_id

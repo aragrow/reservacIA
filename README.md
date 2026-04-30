@@ -56,16 +56,16 @@ Three conveniences, all loopback-guarded:
 | GET | `/rooms/{id}/tables` | JWT | all tables in a given room |
 | GET | `/tables` | JWT | list tables; optional `?room_id=N` filter |
 | POST | `/tables` | JWT | create a table (`table_number`, `capacity 2-12`, optional `room_id`) |
-| GET | `/tables/available` | JWT | tables with no conflict within 2h of `?at=ISO`; filters: `?party_size=N&room_id=N` |
+| GET | `/tables/available` | JWT | tables with no conflict within 2h of `?at=ISO`; filters: `?party_size=N&room_id=N`. Naive `at` (no `Z` / `+HH:MM` suffix) is interpreted as the restaurant's local timezone, same as `reservation_at` on POST/PATCH. |
 | GET | `/tables/{id}` | JWT | fetch one table (includes nested `room`) |
 | PATCH | `/tables/{id}` | JWT | update number/capacity/room (409 if shrinking capacity below an existing party) |
 | DELETE | `/tables/{id}` | JWT | delete (409 if referenced by any reservation) |
 | GET | `/tables/{id}/reservations` | JWT | reservations assigned to a given table (supports `?status=...`) |
-| GET | `/reservations` | JWT | list; filters: `?phone=...&status=confirmed\|cancelled&table_id=...` |
-| GET | `/reservations/{id}` | JWT | fetch one |
-| POST | `/reservations` | JWT | create (auto-assigns smallest fitting table; optional `table_id` pins) |
-| PATCH | `/reservations/{id}` | JWT | partial update |
-| POST | `/reservations/{id}/cancel` | JWT | soft-cancel (sets `status='cancelled'`) |
+| GET | `/reservations` | JWT | list; filters: `?phone=...&status=confirmed\|cancelled&table_id=...`. Hard cap of 5 rows; responses do **not** include `phone` or `customer_name`. |
+| GET | `/reservations/{id}` | JWT | fetch one. Response does **not** include `phone` or `customer_name`. |
+| POST | `/reservations` | JWT | create (auto-assigns smallest fitting table; optional `table_id` pins). Request takes `phone` + `customer_name`; response does not echo them back. |
+| PATCH | `/reservations/{id}` | JWT | partial update. Optional `verify_phone` body field — when present, server compares it to the stored phone and returns 403 on mismatch (cross-customer write prevention). |
+| POST | `/reservations/{id}/cancel` | JWT | soft-cancel (sets `status='cancelled'`). Optional body `{"verify_phone": "+1..."}` — same 403-on-mismatch contract as PATCH. Empty body still works. |
 
 Interactive OpenAPI docs: `http://localhost:8765/docs`. In local mode (`LOCAL_MODE=true`) the Authorize dialog is pre-filled automatically on page load — just open and go. In production mode, click **Authorize** 🔒 and paste an access token into the `HTTPBearer` field.
 

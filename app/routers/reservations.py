@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 
 from app import crud
 from app.crud import ReservationError
 from app.db import connection
-from app.models import ReservationCreate, ReservationOut, ReservationStatus, ReservationUpdate
+from app.models import (
+    ReservationCancel,
+    ReservationCreate,
+    ReservationOut,
+    ReservationStatus,
+    ReservationUpdate,
+)
 from app.security import require_agent
 
 router = APIRouter(
@@ -67,6 +73,24 @@ def create(body: ReservationCreate) -> dict:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
+_PHONE_MISMATCH_DETAIL = "verify_phone does not match the stored phone for this reservation"
+
+
+def _enforce_verify_phone(existing: dict, claimed: Optional[str]) -> None:
+    """Server-side ownership check. When the caller supplies `verify_phone`,
+    it MUST equal the reservation's stored phone — otherwise 403. Absent
+    `verify_phone` skips the check (preserves callers that don't yet pass
+    one). Reads never expose the stored phone, so this is the only way an
+    agent can prove it owns the reservation before mutating it.
+    """
+    if claimed is None:
+        return
+    if claimed != existing["phone"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=_PHONE_MISMATCH_DETAIL
+        )
+
+
 @router.patch("/{reservation_id}", response_model=ReservationOut)
 def update(reservation_id: int, body: ReservationUpdate) -> dict:
     try:
@@ -74,6 +98,7 @@ def update(reservation_id: int, body: ReservationUpdate) -> dict:
             existing = crud.get_reservation(conn, reservation_id)
             if existing is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reservation not found")
+            _enforce_verify_phone(existing, body.verify_phone)
             updated = crud.update_reservation(conn, reservation_id, body)
     except ReservationError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
@@ -83,8 +108,15 @@ def update(reservation_id: int, body: ReservationUpdate) -> dict:
 
 
 @router.post("/{reservation_id}/cancel", response_model=ReservationOut)
-def cancel(reservation_id: int) -> dict:
+def cancel(
+    reservation_id: int,
+    body: Optional[ReservationCancel] = Body(default=None),
+) -> dict:
     with connection() as conn:
+        existing = crud.get_reservation(conn, reservation_id)
+        if existing is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reservation not found")
+        _enforce_verify_phone(existing, body.verify_phone if body else None)
         row = crud.cancel_reservation(conn, reservation_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reservation not found")

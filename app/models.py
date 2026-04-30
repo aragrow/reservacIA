@@ -126,6 +126,12 @@ class ReservationCreate(ReservationBase):
 class ReservationUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # Server-side ownership check: when set, the caller asserts the
+    # reservation's stored phone equals this value. Mismatch → 403. This
+    # field is NOT persisted; it exists only so callers can avoid having to
+    # read the stored phone (which is PII and not exposed on reads).
+    verify_phone: Optional[str] = Field(default=None, min_length=_PHONE_MIN, max_length=_PHONE_MAX)
+
     phone: Optional[str] = Field(default=None, min_length=_PHONE_MIN, max_length=_PHONE_MAX)
     customer_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     party_size: Optional[int] = Field(default=None, ge=1, le=200)
@@ -148,6 +154,14 @@ class ReservationUpdate(BaseModel):
     @classmethod
     def _normalize_tz(cls, v: Optional[datetime]) -> Optional[datetime]:
         return _ensure_aware(v) if v is not None else v
+
+
+class ReservationCancel(BaseModel):
+    """Optional body for `POST /reservations/{id}/cancel`. Empty body remains
+    valid (preserves the no-body call-site that existed before)."""
+    model_config = ConfigDict(extra="forbid")
+
+    verify_phone: Optional[str] = Field(default=None, min_length=_PHONE_MIN, max_length=_PHONE_MAX)
 
 
 class ReservationOut(BaseModel):

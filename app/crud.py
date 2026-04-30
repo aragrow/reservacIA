@@ -506,6 +506,9 @@ def update_reservation(
     existing = _row_to_dict(existing_row)
 
     changes = data.model_dump(exclude_unset=True)
+    # `verify_phone` is an auth assertion, not a DB column. The router does
+    # the comparison; we just make sure it never reaches the SQL builder.
+    changes.pop("verify_phone", None)
 
     new_party = changes.get("party_size", existing["party_size"])
     new_at_raw = changes.get("reservation_at", existing["reservation_at"])

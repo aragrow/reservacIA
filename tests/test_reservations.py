@@ -131,6 +131,112 @@ def test_cancel_soft_deletes(client, auth_headers):
     assert any(r["id"] == rid for r in listed)
 
 
+def test_patch_verify_phone_match_succeeds(client, auth_headers):
+    """When `verify_phone` matches the stored phone, PATCH proceeds normally
+    and the response still does not echo the phone."""
+    created = client.post(
+        "/reservations",
+        json=_payload(phone="+15551110001"),
+        headers=auth_headers,
+    ).json()
+    rid = created["id"]
+
+    resp = client.patch(
+        f"/reservations/{rid}",
+        json={"verify_phone": "+15551110001", "party_size": 5},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    out = resp.json()
+    assert out["party_size"] == 5
+    assert "phone" not in out
+    assert "verify_phone" not in out
+
+
+def test_patch_verify_phone_mismatch_returns_403(client, auth_headers):
+    """When `verify_phone` does not match the stored phone, PATCH returns 403
+    and does not mutate the reservation. This is the cross-customer write
+    prevention contract that replaces the old client-side phone comparison."""
+    created = client.post(
+        "/reservations",
+        json=_payload(phone="+15552220001", party_size=4),
+        headers=auth_headers,
+    ).json()
+    rid = created["id"]
+
+    resp = client.patch(
+        f"/reservations/{rid}",
+        json={"verify_phone": "+15559999999", "party_size": 8},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 403
+    assert "verify_phone" in resp.json()["detail"]
+
+    # Confirm no mutation happened: party_size still 4.
+    after = client.get(f"/reservations/{rid}", headers=auth_headers).json()
+    assert after["party_size"] == 4
+
+
+def test_patch_without_verify_phone_still_works(client, auth_headers):
+    """Backward compatibility: callers that don't send `verify_phone` keep
+    working — the check is opt-in. The agent will pass it; older 3rd-party
+    callers don't have to."""
+    created = client.post("/reservations", json=_payload(), headers=auth_headers).json()
+    rid = created["id"]
+    resp = client.patch(
+        f"/reservations/{rid}",
+        json={"party_size": 7},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["party_size"] == 7
+
+
+def test_cancel_verify_phone_mismatch_returns_403(client, auth_headers):
+    created = client.post(
+        "/reservations",
+        json=_payload(phone="+15553330001"),
+        headers=auth_headers,
+    ).json()
+    rid = created["id"]
+
+    resp = client.post(
+        f"/reservations/{rid}/cancel",
+        json={"verify_phone": "+15559999999"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 403
+    # Reservation must still be confirmed.
+    assert client.get(f"/reservations/{rid}", headers=auth_headers).json()["status"] == "confirmed"
+
+
+def test_cancel_verify_phone_match_succeeds(client, auth_headers):
+    created = client.post(
+        "/reservations",
+        json=_payload(phone="+15554440001"),
+        headers=auth_headers,
+    ).json()
+    rid = created["id"]
+
+    resp = client.post(
+        f"/reservations/{rid}/cancel",
+        json={"verify_phone": "+15554440001"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+
+
+def test_cancel_without_body_still_works(client, auth_headers):
+    """The cancel endpoint historically took no body — that call shape must
+    still succeed (the verify_phone check is opt-in)."""
+    created = client.post("/reservations", json=_payload(), headers=auth_headers).json()
+    rid = created["id"]
+    resp = client.post(f"/reservations/{rid}/cancel", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+
+
 def test_unknown_id_returns_404(client, auth_headers):
     assert client.get("/reservations/99999", headers=auth_headers).status_code == 404
     assert client.patch(

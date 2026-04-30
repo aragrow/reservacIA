@@ -356,6 +356,36 @@ def test_available_requires_at_parameter(client, auth_headers):
     assert resp.status_code == 422
 
 
+def test_available_handles_naive_and_aware_at(client, auth_headers):
+    """Regression: a naive `at` query (no tz suffix) used to 500 because the
+    handler skipped the Pydantic-style naive→aware normalisation, and the
+    conflict-window check then did `aware - naive`. Both shapes must succeed
+    and return the same set of tables."""
+    base = (datetime.now(tz=timezone.utc) + timedelta(days=44)).replace(
+        hour=19, minute=30, second=0, microsecond=0
+    )
+    naive_at = base.replace(tzinfo=None).isoformat()  # '2026-...T19:30:00'
+    aware_at = base.isoformat()                       # '2026-...T19:30:00+00:00'
+
+    naive_resp = client.get(
+        "/tables/available",
+        params={"at": naive_at, "party_size": 4},
+        headers=auth_headers,
+    )
+    aware_resp = client.get(
+        "/tables/available",
+        params={"at": aware_at, "party_size": 4},
+        headers=auth_headers,
+    )
+    assert naive_resp.status_code == 200, naive_resp.text
+    assert aware_resp.status_code == 200, aware_resp.text
+    # Naive is interpreted as Madrid local; aware here is UTC. They name
+    # different instants, so the table sets need not be identical — what
+    # matters is that neither path crashes.
+    assert isinstance(naive_resp.json(), list)
+    assert isinstance(aware_resp.json(), list)
+
+
 def test_cancel_releases_table_for_same_time(client, auth_headers):
     at = _future_iso(days=22, hour=19, minute=0)
     r1 = client.post(
